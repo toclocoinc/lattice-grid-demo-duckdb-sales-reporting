@@ -30,16 +30,12 @@ jobs:
 
       # The page loads the grid straight out of node_modules, so the
       # dependencies are part of what gets published rather than a build input.
-      # @duckdb/node-api comes along as a devDependency because the check below
-      # recomputes every figure with a second DuckDB, in Node.
+      # The Parquet data is not in the repository and is not published here:
+      # the page reads it from data.latticegrid.dev, which answers range
+      # requests. `npm run verify` needs the data built locally, so it is run
+      # on a developer machine, not here.
       - name: Install
-        run: npm ci
-
-      # Opens the page in headless Chrome against a range-capable server and
-      # checks every figure against Node's own DuckDB. It fails the build if
-      # the page says anything the data does not.
-      - name: Check the page tells the truth
-        run: npm run verify
+        run: npm ci --omit=dev
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

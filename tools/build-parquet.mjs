@@ -78,18 +78,20 @@ function extract() {
  *   revenue = quantity * net price (after the line discount), USD
  *   cost    = quantity * unit cost, USD
  *   orders  = 1 on an order's first line, else 0, so SUM(orders) counts orders
- * `period` and `week_start` are the calendar month and the Monday of the week.
+ * `line_id` is a unique key for the line (an order has at most 20).
+ * `period` is the calendar month, `week` the Monday that starts the week.
  */
 const sql = (dir) => `
 COPY (
   SELECT
     CAST(s.OrderDate AS DATE)                                  AS order_date,
     s.OrderKey                                                 AS order_key,
+    s.OrderKey * 20 + s.LineNumber                             AS line_id,
     CAST(s.LineNumber AS UTINYINT)                             AS line_no,
     CAST(CASE WHEN s.LineNumber = 0 THEN 1 ELSE 0 END AS UTINYINT) AS orders,
     CAST(year(s.OrderDate) AS SMALLINT)                        AS year,
     strftime(s.OrderDate, '%Y-%m')                             AS period,
-    CAST(date_trunc('week', s.OrderDate) AS DATE)              AS week_start,
+    strftime(date_trunc('week', s.OrderDate), '%Y-%m-%d')      AS week,
     st.CountryName                                             AS country,
     st.State || ' · ' || CAST(s.StoreKey AS VARCHAR)           AS store,
     p.CategoryName                                             AS category,
