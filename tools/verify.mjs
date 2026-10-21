@@ -142,8 +142,8 @@ async function run() {
   const regions = await rows(`SELECT country, sum(revenue_cents)/100.0 AS revenue FROM ${lines} WHERE year = ${LATEST_YEAR} GROUP BY country ORDER BY country`);
   let regionText = await gridText('region');
   check(regionText.includes(regions[0].country) && regionText.includes(money(regions[0].revenue)), 'first region and its revenue', `${regions[0].country} ${money(regions[0].revenue)}`);
-  /* The first regions open on their own; open the last one by its chevron, a real click. */
-  const lastRegion = regions[regions.length - 1].country;
+  /* Regions start closed (groupDefaultExpanded: 0); open the first one by its chevron, a real click. */
+  const lastRegion = regions[0].country;
   await evaluate(`(() => { const row = document.querySelector('[data-grid=region] [data-key="g ${lastRegion}"] .lat-expander'); if (row) row.setAttribute('data-verify-toggle', ''); })()`);
   const wasOpen = await evaluate(`document.querySelector('[data-grid=region] [data-key="g ${lastRegion}"]')?.getAttribute('aria-expanded')`);
   if (wasOpen === 'false') { await click('[data-verify-toggle]'); await settle('the region drill-down'); }
