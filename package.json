@@ -1,0 +1,20 @@
+{
+  "name": "lattice-grid-demo-duckdb-sales-reporting",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "@toclocoinc/lattice-grid": "^1.110.3"
+  },
+  "engines": { "node": ">=22" },
+  "devDependencies": {
+    "@duckdb/node-api": "^1.5.5-r.5"
+  },
+  "description": "The monthly pack, live: financial and operational reporting over 10 million Contoso orders, queried in the browser with DuckDB-Wasm and Lattice Grid.",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "verify": "node tools/verify.mjs",
+    "build-data": "node tools/build-parquet.mjs"
+  }
+}
