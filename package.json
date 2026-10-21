@@ -5,9 +5,11 @@
   "type": "module",
   "license": "MIT",
   "dependencies": {
-    "@toclocoinc/lattice-grid": "^1.110.3"
+    "@toclocoinc/lattice-grid": "^1.111.0"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.5-r.5"
   },
