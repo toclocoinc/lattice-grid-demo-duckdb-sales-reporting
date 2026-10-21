@@ -345,8 +345,8 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     ariaLabel: 'Headline figures for the reporting year',
     nullText: '—',
     tiles: [
-      { id: 'revenue', label: 'Revenue', aggregation: 'max', field: 'revenue', format: { type: 'currency', currency: 'USD', locale: 'en-US', decimals: 0 } },
-      { id: 'margin', label: 'Gross margin', aggregation: 'max', field: 'margin', format: { type: 'currency', currency: 'USD', locale: 'en-US', decimals: 0 } },
+      { id: 'revenue', label: 'Revenue', aggregation: 'max', field: 'revenue', format: { type: 'compact', currency: 'USD', locale: 'en-US', decimals: 2 } },
+      { id: 'margin', label: 'Gross margin', aggregation: 'max', field: 'margin', format: { type: 'compact', currency: 'USD', locale: 'en-US', decimals: 2 } },
       { id: 'marginRate', label: 'Margin rate', aggregation: 'max', field: 'marginRate', format: { type: 'percent', decimals: 1 } },
       { id: 'orders', label: 'Orders', aggregation: 'max', field: 'orders', format: { type: 'number', decimals: 0 } },
       { id: 'yoy', label: 'Revenue vs last year', aggregation: 'max', field: 'yoy', format: { type: 'percent', decimals: 1 } },

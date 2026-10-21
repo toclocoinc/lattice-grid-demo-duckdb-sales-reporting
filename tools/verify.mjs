@@ -30,6 +30,7 @@ const check = (ok, what, detail) => {
   if (!ok) failures.push(what);
 };
 const money = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+const tile = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const compact = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', notation: 'compact', maximumFractionDigits: 1 });
 
 try { await access(file); } catch {
@@ -92,8 +93,8 @@ async function run() {
 
   console.log('KPI strip');
   const kpi = await text('.kpi-strip');
-  check(kpi.includes(money(y25.revenue)), 'revenue tile equals SUM over the year', money(y25.revenue));
-  check(kpi.includes(money(y25.margin)), 'gross margin tile', money(y25.margin));
+  check(kpi.includes(tile.format(y25.revenue)), 'revenue tile equals SUM over the year', tile.format(y25.revenue));
+  check(kpi.includes(tile.format(y25.margin)), 'gross margin tile', tile.format(y25.margin));
   check(kpi.includes(Number(y25.orders).toLocaleString('en-US')), 'orders tile', y25.orders);
   const yoy = y25.revenue / y24.revenue - 1;
   check(kpi.includes(`${(yoy * 100).toFixed(1)}%`), 'revenue vs last year tile', `${(yoy * 100).toFixed(1)}%`);
@@ -207,7 +208,7 @@ async function run() {
   await click('#tab-pack');
   await settle('the pack for the new year');
   const kpi24 = await text('.kpi-strip');
-  check(kpi24.includes(money(y24.revenue)), 'changing the year changes the tiles', money(y24.revenue));
+  check(kpi24.includes(tile.format(y24.revenue)), 'changing the year changes the tiles', tile.format(y24.revenue));
   check((await gridText('monthly')).includes(`${LATEST_YEAR - 1}-12`), 'and the monthly grid');
   check((await gridText('pack')).includes(`${LATEST_YEAR - 1}-01`), 'and the pivot');
   await click('[data-theme-toggle]');
