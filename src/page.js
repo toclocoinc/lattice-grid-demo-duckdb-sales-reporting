@@ -227,6 +227,9 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   /* Grids                                                             */
   /* ---------------------------------------------------------------- */
 
+  /** True once a grid holds real rows: the grid counts its placeholder rows too, so the first row must not be pending. */
+  const hasRows = (grid) => grid.rows.count() > 0 && grid.rows.get(0)?.pending !== true;
+
   /** The chart that reads each grid, so its cover lifts with the grid's. */
   const CHART_OF = { monthly: 'trend', categories: 'margin' };
 
@@ -238,7 +241,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   function watch(key, grid) {
     const poll = () => {
       if (built.grids[key]?.grid !== grid) return;
-      if (grid.rows.count() > 0) {
+      if (hasRows(grid)) {
         requestAnimationFrame(() => {
           covers[key].hide();
           if (CHART_OF[key]) covers[CHART_OF[key]].hide();
@@ -414,7 +417,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
 
   /** True when the tiles are filled and the three views on show have rows. */
   const settled = () => built.kpiValues != null
-    && ['monthly', 'categories', built.tab].every((key) => built.grids[key]?.grid.rows.count() > 0);
+    && ['monthly', 'categories', built.tab].every((key) => built.grids[key]?.grid && hasRows(built.grids[key].grid));
 
   const charts = new Set(['trend', 'margin']);
 

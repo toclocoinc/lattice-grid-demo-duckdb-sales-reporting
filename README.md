@@ -12,6 +12,14 @@ Every filter, sort, group, pivot, quick search and page is SQL run by DuckDB-Was
 through the grid's `duckdbAdapter` and pushdown source; the page shows each
 view's statement count, time and rows scanned.
 
+## Loading
+
+The first visit has slow steps (the query engine, about 34 MB of WebAssembly and a fifth of that on the wire; starting it; reading the year's columns from the Parquet file), so the page says what it is doing instead of showing blank space. Same pattern as the SaaS demo (`src/loading.js`, `src/duckdb.js`):
+
+- A status line in `index.html`, so it is on screen from first paint: a spinner, one plain-English sentence and a progress bar wherever the size is known. "Downloading the query engine (about 34 MB, first visit only): n of m MB", "Starting the engine", "Reading the Parquet footer", then "Reading the 2025 order lines (n of m MB)".
+- Real byte counts, no second download: the engine reports its own download, and the Parquet reads are counted by wrapping the worker. The expected total comes from `parquet_metadata()` (the columns and row groups the opening views touch).
+- Every panel (tiles, charts, grids) is covered by a loading state until its grid holds real rows, and again when the year changes or a tab is opened for the first time.
+
 ```
 npm install
 npm run build-data      # downloads the public source and writes data/sales.parquet
