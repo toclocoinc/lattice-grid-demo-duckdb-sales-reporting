@@ -14,6 +14,7 @@ import { DEMO_LICENCE } from './src/licence.js';
 import { startDuckDB, readOne } from './src/duckdb.js';
 import { dataUrl } from './src/config.js';
 import { buildPage } from './src/page.js';
+import { createStatus, megabytes } from './src/loading.js';
 
 /* Applied before anything is drawn: a grid keeps whatever licence was in force when it was built. */
 LG.setLicence(DEMO_LICENCE);
@@ -42,26 +43,29 @@ function showMessage(title, message, hint) {
 
 async function start() {
   const started = performance.now();
-  const update = showMessage('The monthly pack, live', 'Starting DuckDB in your browser...');
+  /* The status line is in index.html, so it is there from first paint. */
+  const status = createStatus(root.querySelector('.load-status'));
   try {
-    const { connection, version, close } = await startDuckDB(update);
-    update('Reading the Parquet footer...');
+    const { connection, version, close, reads } = await startDuckDB(
+      (message) => status.set(message),
+      ({ loaded, total }) => status.set(
+        `Downloading the query engine (about ${megabytes(total)}, first visit only): ${megabytes(loaded)} of ${megabytes(total)}`,
+        loaded / total,
+      ),
+    );
+    status.set('Reading the Parquet footer: which rows are in which part of the file');
     /* An unfiltered count is answered from the file's metadata: no row data is read. */
     const counted = await readOne(connection, `SELECT count(*) AS n FROM read_parquet('${dataUrl().replaceAll("'", "''")}')`);
     const totalLines = Number(counted?.n ?? 0);
 
-    const page = buildPage({ root, LG, createChart, createKPI, connection, totalLines });
+    const page = buildPage({ root, LG, createChart, createKPI, connection, totalLines, reads, status });
     window.addEventListener('pagehide', () => { page.destroy(); close(); }, { once: true });
     window.__salesDemo = page;
     await page.start();
 
     /* Ready means the page is true, not that something appeared: the tiles are filled and the first grid has rows. */
     const deadline = Date.now() + 120000;
-    const settled = () => page.kpiValues?.revenue != null
-      && page.grids.monthly?.grid.rows.count() > 0
-      && page.grids.categories?.grid.rows.count() > 0
-      && page.grids.pack?.grid.rows.count() > 0;
-    while (Date.now() < deadline && !settled()) await new Promise((r) => setTimeout(r, 150));
+    while (Date.now() < deadline && !page.settled()) await new Promise((r) => setTimeout(r, 150));
 
     page.ready = true;
     page.bootMs = Math.round(performance.now() - started);

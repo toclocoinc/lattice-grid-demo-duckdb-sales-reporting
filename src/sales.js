@@ -119,3 +119,18 @@ export const fmt = {
   percent: (n, digits = 1) => (n == null || !Number.isFinite(Number(n)) ? '—' : `${(Number(n) * 100).toFixed(digits)}%`),
   ms: (n) => (n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(2)} s`),
 };
+
+/**
+ * Roughly how many bytes of the file a year's opening views will fetch: the
+ * compressed size of the columns they name, in the row groups whose `year`
+ * statistics reach the year or the one before. Taken from the footer, which
+ * the engine has already read. The loading line uses it for its progress bar.
+ */
+export function readBytesSql(year) {
+  const file = escape(dataUrl());
+  return `SELECT sum(total_compressed_size) AS bytes FROM parquet_metadata('${file}')
+    WHERE path_in_schema IN ('year', 'period', 'revenue_cents', 'cost_cents', 'orders', 'category')
+      AND row_group_id IN (
+        SELECT row_group_id FROM parquet_metadata('${file}')
+        WHERE path_in_schema = 'year' AND CAST(stats_max AS INTEGER) >= ${Number(year) - 1} AND CAST(stats_min AS INTEGER) <= ${Number(year)})`;
+}

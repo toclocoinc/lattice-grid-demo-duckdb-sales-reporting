@@ -16,10 +16,11 @@
  */
 
 import { recordingConnection } from './duckdb.js';
+import { megabytes, slot } from './loading.js';
 import { LATEST_YEAR } from './config.js';
 import {
   DEMAND_COLUMNS, LINE_COLUMNS, LINE_FIELDS, MONTHLY_COLUMNS, PACK_COLUMNS, REGION_COLUMNS, YEARS,
-  categoryFrom, demandFrom, fmt, monthlyFrom, salesFrom, storesFrom,
+  categoryFrom, demandFrom, fmt, monthlyFrom, readBytesSql, salesFrom, storesFrom,
 } from './sales.js';
 
 const el = (tag, className, text) => {
@@ -38,7 +39,7 @@ const TABS = [
   { id: 'lines', label: 'Order lines', blurb: 'Every order line of the year. Search, filter, sort and page: each one is a query.' },
 ];
 
-export function buildPage({ root, LG, createChart, createKPI, connection, totalLines }) {
+export function buildPage({ root, LG, createChart, createKPI, connection, totalLines, reads, status }) {
   const built = {
     ready: false,
     year: LATEST_YEAR,
@@ -84,10 +85,12 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     + 'with every total, running total, pivot and drill-down computed by DuckDB in your browser as you ask for it.';
   header.append(lede);
   root.append(header);
+  root.append(status.el);
 
   const kpiHost = el('section', 'kpi-strip');
   kpiHost.setAttribute('aria-label', 'Headline figures for the reporting year');
-  root.append(kpiHost);
+  const kpiSlot = slot(kpiHost, 'Waiting for the order lines, then the headline figures');
+  root.append(kpiSlot.el);
   const kpiTiming = el('p', 'timing');
   kpiTiming.dataset.timing = 'kpi';
   root.append(kpiTiming);
@@ -102,7 +105,17 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   monthGridHost.dataset.grid = 'monthly';
   const monthTiming = el('p', 'timing');
   monthTiming.dataset.timing = 'monthly';
-  monthCard.append(monthTitle, el('p', 'blurb', 'Year to date, change on the month before and on the same month a year earlier: window functions in the query behind the grid, with the chart reading the grid’s rows.'), monthChart, monthGridHost, monthTiming);
+  const marginChart = el('div', 'chart-box');
+  marginChart.dataset.chart = 'margin';
+  const marginGridHost = el('div', 'grid-host short');
+  marginGridHost.dataset.grid = 'categories';
+  const chartSlot = (box) => slot(box, 'Waiting for the order lines, then this chart');
+  const gridSlot = (host) => slot(host, 'Waiting for the order lines, then these rows');
+  const covers = {
+    trend: chartSlot(monthChart), monthly: gridSlot(monthGridHost),
+    margin: chartSlot(marginChart), categories: gridSlot(marginGridHost),
+  };
+  monthCard.append(monthTitle, el('p', 'blurb', 'Year to date, change on the month before and on the same month a year earlier: window functions in the query behind the grid, with the chart reading the grid’s rows.'), covers.trend.el, covers.monthly.el, monthTiming);
   root.append(monthCard);
 
   const marginCard = el('section', 'card');
@@ -110,11 +123,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   const marginTitle = el('h2', null, 'Margin by category');
   marginTitle.id = 'margin-title';
   const marginBody = el('div', 'two-up');
-  const marginChart = el('div', 'chart-box');
-  marginChart.dataset.chart = 'margin';
-  const marginGridHost = el('div', 'grid-host short');
-  marginGridHost.dataset.grid = 'categories';
-  marginBody.append(marginChart, marginGridHost);
+  marginBody.append(covers.margin.el, covers.categories.el);
   const marginTiming = el('p', 'timing');
   marginTiming.dataset.timing = 'categories';
   marginCard.append(marginTitle, marginBody, marginTiming);
@@ -170,7 +179,8 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     host.dataset.grid = tab.id;
     const timing = el('p', 'timing');
     timing.dataset.timing = tab.id;
-    panel.append(host, timing);
+    covers[tab.id] = gridSlot(host);
+    panel.append(covers[tab.id].el, timing);
     panels[tab.id] = { panel, host, timing };
     tabCard.append(panel);
   }
@@ -217,6 +227,29 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   /* Grids                                                             */
   /* ---------------------------------------------------------------- */
 
+  /** The chart that reads each grid, so its cover lifts with the grid's. */
+  const CHART_OF = { monthly: 'trend', categories: 'margin' };
+
+  /**
+   * Lift a grid's cover (and its chart's) once the grid is showing rows: its
+   * first answer, not the moment it was built. A grid replaced meanwhile stops
+   * the watch.
+   */
+  function watch(key, grid) {
+    const poll = () => {
+      if (built.grids[key]?.grid !== grid) return;
+      if (grid.rows.count() > 0) {
+        requestAnimationFrame(() => {
+          covers[key].hide();
+          if (CHART_OF[key]) covers[CHART_OF[key]].hide();
+        });
+        return;
+      }
+      setTimeout(poll, 100);
+    };
+    poll();
+  }
+
   function mountGrid(key, host, { from, fields, columns, rowKey, extra = {}, scans = false, quickColumns }) {
     built.grids[key]?.grid.destroy?.();
     host.textContent = '';
@@ -226,6 +259,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     });
     const grid = LG.createGrid(host, { rowKey, columns, source, showTotalInHeader: false, ...extra });
     built.grids[key] = { grid, source, adapter };
+    watch(key, grid);
     return built.grids[key];
   }
 
@@ -330,6 +364,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     }
     if (!mounted.has(id)) {
       mounted.add(id);
+      covers[id].show(`Reading the ${built.year} order lines for this view`);
       TAB_BUILDERS[id]();
     }
   }
@@ -370,6 +405,55 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
       orders: num(now?.orders), yoy: prior ? revenue / prior - 1 : null,
     };
     kpi.setRows([{ id: 'now', ...built.kpiValues }]);
+    kpiSlot.hide();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Loading: what the page says while a year is read                    */
+  /* ---------------------------------------------------------------- */
+
+  /** True when the tiles are filled and the three views on show have rows. */
+  const settled = () => built.kpiValues != null
+    && ['monthly', 'categories', built.tab].every((key) => built.grids[key]?.grid.rows.count() > 0);
+
+  const charts = new Set(['trend', 'margin']);
+
+  /** Put every panel back into its loading state. */
+  function coverAll() {
+    built.kpiValues = null;
+    kpiSlot.show(`Waiting for the ${built.year} order lines, then the headline figures`);
+    for (const key of Object.keys(covers)) {
+      covers[key].show(`Waiting for the ${built.year} order lines, then ${charts.has(key) ? 'this chart' : 'these rows'}`);
+    }
+  }
+
+  /**
+   * Narrate a year's read on the status line, with a bar from the bytes the
+   * engine has fetched against what the opening views are expected to need,
+   * until the views have rows. Resolves when they do.
+   */
+  async function trackLoad() {
+    const year = built.year;
+    status.show();
+    status.set(`Looking up where the ${year} order lines sit in the file`);
+    let expected = null;
+    try {
+      const row = (await connection.query(readBytesSql(year))).toArray()[0]?.toJSON();
+      expected = num(row?.bytes) || null;
+    } catch { /* no statistics: the line shows bytes so far, with no bar */ }
+    const before = reads.bytes;
+    const line = (read) => {
+      const total = Math.max(expected ?? 0, read);
+      if (!expected) return [`Reading the ${year} order lines (${megabytes(read)} so far)`, null];
+      if (read >= total) return [`Totalling the ${year} order lines in the engine, then drawing the views`, 1];
+      return [`Reading the ${year} order lines (${megabytes(read)} of ${megabytes(total)})`, read / total];
+    };
+    status.set(...line(0));
+    const stop = reads.onRead((total) => status.set(...line(total - before)));
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline && !(year === built.year && settled())) await new Promise((r) => setTimeout(r, 100));
+    stop();
+    status.hide();
   }
 
   /* ---------------------------------------------------------------- */
@@ -380,6 +464,8 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     built.year = year;
     yearSelect.value = String(year);
     mounted.clear();
+    coverAll();
+    const tracked = trackLoad();
     for (const tab of TABS) {
       built.grids[tab.id]?.grid.destroy?.();
       delete built.grids[tab.id];
@@ -387,7 +473,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     }
     mountMonthly();
     mountCategories();
-    await Promise.all([refreshKpi(), selectTab(built.tab)]);
+    await Promise.all([refreshKpi(), selectTab(built.tab), tracked]);
   }
   yearSelect.addEventListener('change', () => { void setYear(Number(yearSelect.value)); });
 
@@ -402,10 +488,12 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   setTheme(darkQuery?.matches ? 'dark' : 'light');
 
   built.start = async () => {
+    const tracked = trackLoad();
     mountMonthly();
     mountCategories();
-    await Promise.all([refreshKpi(), selectTab('pack')]);
+    await Promise.all([refreshKpi(), selectTab('pack'), tracked]);
   };
+  built.settled = settled;
   built.selectTab = selectTab;
   built.setYear = setYear;
   built.destroy = () => {
