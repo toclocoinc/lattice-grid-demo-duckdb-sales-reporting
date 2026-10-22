@@ -6,7 +6,7 @@
  * page). `?data=local` reads `data/sales.parquet` from the same server instead,
  * for development with `npm start`; `?data=<url>` points at any other copy.
  */
-export const DATA_URL = 'https://data.latticegrid.dev/duckdb/lattice-grid-demo-duckdb-sales-reporting/sales.parquet';
+export const DATA_URL = 'https://data.latticegrid.dev/duckdb/lattice-grid-demo-duckdb-sales-reporting/v2/sales.parquet';
 export const LOCAL_DATA = './data/sales.parquet';
 
 /** The Parquet file this page load reads, as an absolute URL (DuckDB resolves it in a worker). */

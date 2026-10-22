@@ -105,7 +105,7 @@ COPY (
   JOIN read_parquet('${dir}/product.parquet') p USING (ProductKey)
   JOIN read_parquet('${dir}/store.parquet') st USING (StoreKey)
   ORDER BY s.OrderDate, s.OrderKey, s.LineNumber
-) TO '${outFile}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100000, PARQUET_VERSION V2)`;
+) TO '${outFile}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100000, PARQUET_VERSION V2, WRITE_BLOOM_FILTER false)`;
 
 await download();
 if (!(await exists(join(extracted, 'sales.parquet')))) {
