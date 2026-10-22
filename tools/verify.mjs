@@ -144,8 +144,10 @@ async function run() {
   check(regionText.includes(regions[0].country) && regionText.includes(money(regions[0].revenue)), 'first region and its revenue', `${regions[0].country} ${money(regions[0].revenue)}`);
   /* Regions start closed (groupDefaultExpanded: 0); open the first one by its chevron, a real click. */
   const lastRegion = regions[0].country;
-  await evaluate(`(() => { const row = document.querySelector('[data-grid=region] [data-key="g ${lastRegion}"] .lat-expander'); if (row) row.setAttribute('data-verify-toggle', ''); })()`);
-  const wasOpen = await evaluate(`document.querySelector('[data-grid=region] [data-key="g ${lastRegion}"]')?.getAttribute('aria-expanded')`);
+  /* A group row's key joins its parts with U+0000, which a CSS selector cannot spell, so find the row by its label. */
+  const findRegion = `[...document.querySelectorAll('[data-grid=region] [aria-expanded]')].find((r) => (r.textContent || '').includes(${JSON.stringify(lastRegion)}))`;
+  await evaluate(`(() => { const row = ${findRegion}; const ex = row && row.querySelector('.lat-expander'); if (ex) ex.setAttribute('data-verify-toggle', ''); })()`);
+  const wasOpen = await evaluate(`(${findRegion})?.getAttribute('aria-expanded')`);
   if (wasOpen === 'false') { await click('[data-verify-toggle]'); await settle('the region drill-down'); }
   const stores = await rows(`SELECT store, sum(revenue_cents)/100.0 AS revenue FROM ${lines} WHERE year = ${LATEST_YEAR} AND country = '${regions[0].country}' GROUP BY store ORDER BY store`);
   regionText = await gridText('region');
