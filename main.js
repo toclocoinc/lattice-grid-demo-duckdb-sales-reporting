@@ -12,7 +12,7 @@ import { createChart } from './node_modules/@toclocoinc/lattice-grid/modules/cha
 import { createKPI } from './node_modules/@toclocoinc/lattice-grid/modules/kpi.esm.min.js';
 import { DEMO_LICENCE } from './src/licence.js';
 import { startDuckDB, readOne } from './src/duckdb.js';
-import { dataUrl } from './src/config.js';
+import { MONTHLY_FILE, dataUrl, tableUrl } from './src/config.js';
 import { buildPage } from './src/page.js';
 import { createStatus, megabytes } from './src/loading.js';
 
@@ -53,9 +53,9 @@ async function start() {
         loaded / total,
       ),
     );
-    status.set('Reading the Parquet footer: which rows are in which part of the file');
-    /* An unfiltered count is answered from the file's metadata: no row data is read. */
-    const counted = await readOne(connection, `SELECT count(*) AS n FROM read_parquet('${dataUrl().replaceAll("'", "''")}')`);
+    status.set('Reading the summary tables: which figures are in which part of the file');
+    /* The order lines in the file, as the monthly table counts them: the order-lines file itself is not opened until its tab is. */
+    const counted = await readOne(connection, `SELECT sum(lines) AS n FROM read_parquet('${tableUrl(MONTHLY_FILE).replaceAll("'", "''")}')`);
     const totalLines = Number(counted?.n ?? 0);
 
     const page = buildPage({ root, LG, createChart, createKPI, connection, totalLines, reads, status });

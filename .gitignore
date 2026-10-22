@@ -3,3 +3,4 @@ node_modules/
 .scratch-12016/
 data/*.parquet
 data/*.zip
+.scratch-12347/

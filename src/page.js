@@ -1,7 +1,8 @@
 /**
  * The page.
  *
- * Every number on it comes from a statement DuckDB ran over the Parquet file:
+ * Every number on it comes from a statement DuckDB ran over Parquet files: the
+ * opening views over two small summary tables, the order lines tab over the lines:
  *
  *   the KPI strip     one aggregate, this year against the one before
  *   running totals    a grid whose FROM is a monthly query with window functions
@@ -20,7 +21,7 @@ import { megabytes, slot } from './loading.js';
 import { LATEST_YEAR } from './config.js';
 import {
   DEMAND_COLUMNS, LINE_COLUMNS, LINE_FIELDS, MONTHLY_COLUMNS, PACK_COLUMNS, REGION_COLUMNS, YEARS,
-  categoryFrom, demandFrom, fmt, monthlyFrom, readBytesSql, salesFrom, storesFrom,
+  categoryFrom, demandFrom, fmt, monthlyFrom, packFrom, readBytesSql, salesFrom, storesFrom, summaryFrom,
 } from './sales.js';
 
 const el = (tag, className, text) => {
@@ -81,7 +82,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   const lede = el('p', 'lede');
   lede.textContent =
     'Finance closes the month on revenue, margin and orders; operations plans next month from units by product by week. '
-    + `Here both read the same ${fmt.int(totalLines)} order lines of a retailer’s ten years of trading, straight from one Parquet file, `
+    + `Here both read the same ${fmt.int(totalLines)} order lines of a retailer’s ten years of trading, summed by month, store and week into small Parquet tables, `
     + 'with every total, running total, pivot and drill-down computed by DuckDB in your browser as you ask for it.';
   header.append(lede);
   root.append(header);
@@ -89,7 +90,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
 
   const kpiHost = el('section', 'kpi-strip');
   kpiHost.setAttribute('aria-label', 'Headline figures for the reporting year');
-  const kpiSlot = slot(kpiHost, 'Waiting for the order lines, then the headline figures');
+  const kpiSlot = slot(kpiHost, 'Waiting for the figures, then the headline tiles');
   root.append(kpiSlot.el);
   const kpiTiming = el('p', 'timing');
   kpiTiming.dataset.timing = 'kpi';
@@ -109,8 +110,8 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   marginChart.dataset.chart = 'margin';
   const marginGridHost = el('div', 'grid-host short');
   marginGridHost.dataset.grid = 'categories';
-  const chartSlot = (box) => slot(box, 'Waiting for the order lines, then this chart');
-  const gridSlot = (host) => slot(host, 'Waiting for the order lines, then these rows');
+  const chartSlot = (box) => slot(box, 'Waiting for the figures, then this chart');
+  const gridSlot = (host) => slot(host, 'Waiting for the figures, then these rows');
   const covers = {
     trend: chartSlot(monthChart), monthly: gridSlot(monthGridHost),
     margin: chartSlot(marginChart), categories: gridSlot(marginGridHost),
@@ -310,10 +311,10 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
 
   const TAB_BUILDERS = {
     pack: () => mountGrid('pack', panels.pack.host, {
-      from: salesFrom(built.year),
-      fields: ['line_id', 'category', 'period', 'revenue'],
+      from: packFrom(built.year),
+      fields: ['cell_id', 'category', 'period', 'revenue'],
       columns: PACK_COLUMNS,
-      rowKey: 'line_id',
+      rowKey: 'cell_id',
       scans: true,
       extra: { pivot: { enabled: true, groupTotals: 'after', totalsLabel: 'Year' }, grandTotalRow: 'bottom', groupDefaultExpanded: 0 },
     }),
@@ -367,7 +368,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     }
     if (!mounted.has(id)) {
       mounted.add(id);
-      covers[id].show(`Reading the ${built.year} order lines for this view`);
+      covers[id].show(id === 'lines' ? `Reading the ${built.year} order lines` : `Reading the ${built.year} figures for this view`);
       TAB_BUILDERS[id]();
     }
   }
@@ -395,7 +396,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   async function refreshKpi() {
     const conn = connectionFor('kpi', false);
     const result = await conn.query(
-      `SELECT year, sum(revenue) AS revenue, sum(margin) AS margin, sum(orders) AS orders FROM ${salesFrom(built.year - 1, built.year)} GROUP BY year`,
+      `SELECT year, sum(revenue) AS revenue, sum(margin) AS margin, sum(orders) AS orders FROM ${summaryFrom(built.year - 1, built.year)} GROUP BY year`,
     );
     const byYear = new Map(result.toArray().map((r) => { const o = r.toJSON(); return [Number(o.year), o]; }));
     const now = byYear.get(built.year);
@@ -424,9 +425,9 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   /** Put every panel back into its loading state. */
   function coverAll() {
     built.kpiValues = null;
-    kpiSlot.show(`Waiting for the ${built.year} order lines, then the headline figures`);
+    kpiSlot.show(`Waiting for the ${built.year} figures, then the headline tiles`);
     for (const key of Object.keys(covers)) {
-      covers[key].show(`Waiting for the ${built.year} order lines, then ${charts.has(key) ? 'this chart' : 'these rows'}`);
+      covers[key].show(`Waiting for the ${built.year} figures, then ${charts.has(key) ? 'this chart' : 'these rows'}`);
     }
   }
 
@@ -438,7 +439,7 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
   async function trackLoad() {
     const year = built.year;
     status.show();
-    status.set(`Looking up where the ${year} order lines sit in the file`);
+    status.set(`Looking up where the ${year} figures sit in the summary tables`);
     let expected = null;
     try {
       const row = (await connection.query(readBytesSql(year))).toArray()[0]?.toJSON();
@@ -447,9 +448,9 @@ export function buildPage({ root, LG, createChart, createKPI, connection, totalL
     const before = reads.bytes;
     const line = (read) => {
       const total = Math.max(expected ?? 0, read);
-      if (!expected) return [`Reading the ${year} order lines (${megabytes(read)} so far)`, null];
-      if (read >= total) return [`Totalling the ${year} order lines in the engine, then drawing the views`, 1];
-      return [`Reading the ${year} order lines (${megabytes(read)} of ${megabytes(total)})`, read / total];
+      if (!expected) return [`Reading the ${year} figures (${megabytes(read)} so far)`, null];
+      if (read >= total) return [`Totalling the ${year} figures in the engine, then drawing the views`, 1];
+      return [`Reading the ${year} figures (${megabytes(read)} of ${megabytes(total)})`, read / total];
     };
     status.set(...line(0));
     const stop = reads.onRead((total) => status.set(...line(total - before)));

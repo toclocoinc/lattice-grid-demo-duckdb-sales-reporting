@@ -2,12 +2,15 @@
  * What the data is, and how each view reads it.
  *
  * One Parquet file, one row per order line, built by tools/build-parquet.mjs
- * from the Contoso Data Generator V2 10M-orders set. Amounts are held in whole
- * cents so that the file is small; `SALES` turns them into dollars, and adds
- * the margin, in the FROM clause DuckDB runs. Nothing is computed in the page.
+ * from the Contoso Data Generator V2 10M-orders set, and two small tables
+ * beside it that the same tool sums from it: month x category x region x
+ * store, and week x category x product. The opening views read the small
+ * tables; only the Order lines tab reads the order lines. Amounts are held in
+ * whole cents so that the files are small; the FROM clauses turn them into
+ * dollars and add the margin. Nothing is computed in the page.
  */
 
-import { dataUrl } from './config.js';
+import { MONTHLY_FILE, WEEKLY_FILE, dataUrl, tableUrl } from './config.js';
 
 /** Years the pack can be opened on. 2016 starts in May, so it has no full year before it. */
 export const YEARS = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017];
@@ -20,6 +23,23 @@ export function salesFrom(fromYear, toYear = fromYear) {
   return `(SELECT *, revenue_cents / 100.0 AS revenue, cost_cents / 100.0 AS cost, `
     + `(revenue_cents - cost_cents) / 100.0 AS margin `
     + `FROM read_parquet('${file}') WHERE year BETWEEN ${Number(fromYear)} AND ${Number(toYear)})`;
+}
+
+/**
+ * The month x category x region x store table of the given years, with dollars
+ * and margin. Sums of order lines, so any total over it is the total over the lines.
+ */
+export function summaryFrom(fromYear, toYear = fromYear) {
+  const file = escape(tableUrl(MONTHLY_FILE));
+  return `(SELECT *, revenue_cents / 100.0 AS revenue, cost_cents / 100.0 AS cost, `
+    + `(revenue_cents - cost_cents) / 100.0 AS margin `
+    + `FROM read_parquet('${file}') WHERE year BETWEEN ${Number(fromYear)} AND ${Number(toYear)})`;
+}
+
+/** Revenue by category and month, one row per cell of the pack; `cell_id` is its key. */
+export function packFrom(year) {
+  return `(SELECT category || ' ' || period AS cell_id, category, period, sum(revenue_cents) / 100.0 AS revenue `
+    + `FROM ${summaryFrom(year)} GROUP BY category, period)`;
 }
 
 /**
@@ -36,7 +56,7 @@ export function monthlyFrom(year) {
       revenue / nullif(lag(revenue, 12) OVER (ORDER BY period), 0) - 1 AS change_on_year
     FROM (
       SELECT period, year, sum(revenue) AS revenue, sum(margin) AS margin, sum(orders) AS orders
-      FROM ${salesFrom(year - 1, year)} GROUP BY period, year
+      FROM ${summaryFrom(year - 1, year)} GROUP BY period, year
     )
   ) WHERE year = ${Number(year)})`;
 }
@@ -44,17 +64,18 @@ export function monthlyFrom(year) {
 /** One row per store (and per product and week), so a drill-down ends on a store rather than on order lines. */
 export function storesFrom(year) {
   return `(SELECT country, store, sum(revenue) AS revenue, sum(margin) AS margin, sum(orders) AS orders, sum(quantity) AS quantity `
-    + `FROM ${salesFrom(year)} GROUP BY country, store)`;
+    + `FROM ${summaryFrom(year)} GROUP BY country, store)`;
 }
 
 export function demandFrom(year) {
-  return `(SELECT category, product, week, sum(quantity) AS quantity FROM ${salesFrom(year)} GROUP BY category, product, week)`;
+  const file = escape(tableUrl(WEEKLY_FILE));
+  return `(SELECT category, product, week, sum(quantity) AS quantity FROM read_parquet('${file}') WHERE year = ${Number(year)} GROUP BY category, product, week)`;
 }
 
 /** Revenue and margin by category, for the margin chart. */
 export function categoryFrom(year) {
   return `(SELECT category, sum(revenue) AS revenue, sum(margin) AS margin, sum(margin) / sum(revenue) AS margin_rate `
-    + `FROM ${salesFrom(year)} GROUP BY category)`;
+    + `FROM ${summaryFrom(year)} GROUP BY category)`;
 }
 
 const dollars = { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', decimals: 0 };
@@ -121,16 +142,16 @@ export const fmt = {
 };
 
 /**
- * Roughly how many bytes of the file a year's opening views will fetch: the
- * compressed size of the columns they name, in the row groups whose `year`
- * statistics reach the year or the one before. Taken from the footer, which
- * the engine has already read. The loading line uses it for its progress bar.
+ * Roughly how many bytes of the monthly table a year's opening views will
+ * fetch: the compressed size of the columns they name, in the row groups whose
+ * `year` statistics reach the year or the one before. Taken from the footer.
+ * The loading line uses it for its progress bar.
  */
 export function readBytesSql(year) {
-  const file = escape(dataUrl());
-  return `SELECT sum(total_compressed_size) AS bytes FROM parquet_metadata('${file}')
-    WHERE path_in_schema IN ('year', 'period', 'revenue_cents', 'cost_cents', 'orders', 'category')
+  const url = escape(tableUrl(MONTHLY_FILE));
+  return `SELECT sum(total_compressed_size) AS bytes FROM parquet_metadata('${url}')
+    WHERE path_in_schema IN ('year', 'period', 'category', 'country', 'store', 'revenue_cents', 'cost_cents', 'orders', 'quantity')
       AND row_group_id IN (
-        SELECT row_group_id FROM parquet_metadata('${file}')
+        SELECT row_group_id FROM parquet_metadata('${url}')
         WHERE path_in_schema = 'year' AND CAST(stats_max AS INTEGER) >= ${Number(year) - 1} AND CAST(stats_min AS INTEGER) <= ${Number(year)})`;
 }

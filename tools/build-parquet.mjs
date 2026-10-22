@@ -15,6 +15,10 @@
  *   2. Extracts it with `7z`, `7zz` or `bsdtar` (any of them) into .cache/.
  *   3. Joins the order lines to the product and store tables and writes ONE
  *      Parquet file: zstd, row groups of 100,000 rows, sorted by order date.
+ *   4. Aggregates that file into two small tables next to it, which the
+ *      opening views read instead of the order lines (see below).
+ *
+ *   node tools/build-parquet.mjs --summaries-only   # step 4 only, from an existing data/sales.parquet
  *
  * The sort and the row-group size are the point. DuckDB-Wasm reads the file
  * over HTTP in byte ranges and can skip a row group only when its min/max
@@ -42,6 +46,10 @@ const archive = join(cache, 'parquet-10m.7z');
 const outFile = join(root, 'data', 'sales.parquet');
 const SOURCE = 'https://github.com/sql-bi/Contoso-Data-Generator-V2-Data/releases/download/ready-to-use-data/parquet-10m.7z';
 const keep = process.argv.includes('--keep');
+/* --summaries-only: derive the small tables from an existing data/sales.parquet, without the source archive. */
+const summariesOnly = process.argv.includes('--summaries-only');
+const monthlyFile = join(root, 'data', 'sales_monthly.parquet');
+const weeklyFile = join(root, 'data', 'sales_weekly.parquet');
 
 const exists = async (path) => { try { await access(path); return true; } catch { return false; } };
 const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
@@ -107,24 +115,77 @@ COPY (
   ORDER BY s.OrderDate, s.OrderKey, s.LineNumber
 ) TO '${outFile}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100000, PARQUET_VERSION V2, WRITE_BLOOM_FILTER false)`;
 
-await download();
-if (!(await exists(join(extracted, 'sales.parquet')))) {
-  await mkdir(extracted, { recursive: true });
-  extract();
+const one = async (connection, query) => (await connection.runAndReadAll(query)).getRowObjectsJson()[0];
+
+/*
+ * Small pre-aggregated tables, sorted and zstd-compressed like the main file
+ * and written without Bloom filters. The opening views (KPIs, monthly window
+ * functions, charts, pack pivot, region drill-down, demand pivot) read only
+ * these; the order-lines file is read for the Order lines tab alone.
+ *
+ *   sales_monthly.parquet  month x category x region x store: lines, orders,
+ *                          units, revenue_cents, cost_cents
+ *   sales_weekly.parquet   week x category x product: units
+ *
+ * Both are plain sums of the order-lines columns, so every figure is the one
+ * the order lines give. `year` is the order's calendar year, as in sales.parquet
+ * (a week that spans New Year has a row in each year).
+ */
+const summaryCopy = (query, file, rowGroup) => `
+COPY (${query}) TO '${file}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE ${rowGroup}, PARQUET_VERSION V2, WRITE_BLOOM_FILTER false)`;
+
+async function writeSummaries(connection) {
+  const source = `read_parquet('${outFile}')`;
+  await rm(monthlyFile, { force: true });
+  await rm(weeklyFile, { force: true });
+  console.log('Writing data/sales_monthly.parquet and data/sales_weekly.parquet...');
+  await connection.run(summaryCopy(`
+    SELECT year, period, category, country, store,
+      count(*)                AS lines,
+      sum(orders)::BIGINT     AS orders,
+      sum(quantity)::BIGINT   AS quantity,
+      sum(revenue_cents)      AS revenue_cents,
+      sum(cost_cents)         AS cost_cents
+    FROM ${source}
+    GROUP BY year, period, category, country, store
+    ORDER BY year, period, category, country, store`, monthlyFile, 5000));
+  await connection.run(summaryCopy(`
+    SELECT year, week, category, product, sum(quantity)::BIGINT AS quantity
+    FROM ${source}
+    GROUP BY year, week, category, product
+    ORDER BY year, week, category, product`, weeklyFile, 50000));
+  const out = [];
+  for (const [name, file] of [['sales_monthly.parquet', monthlyFile], ['sales_weekly.parquet', weeklyFile]]) {
+    const rows = await one(connection, `SELECT count(*) AS n FROM read_parquet('${file}')`);
+    const bytes = (await stat(file)).size;
+    out.push({ name, rows: Number(rows.n), bytes, size: `${(bytes / 1024).toFixed(0)} KB` });
+  }
+  return out;
+}
+
+if (!summariesOnly) {
+  await download();
+  if (!(await exists(join(extracted, 'sales.parquet')))) {
+    await mkdir(extracted, { recursive: true });
+    extract();
+  }
 }
 
 await mkdir(join(root, 'data'), { recursive: true });
-await rm(outFile, { force: true });
 const connection = await (await DuckDBInstance.create(':memory:')).connect();
 await connection.run(`SET preserve_insertion_order = true`);
-console.log('Writing data/sales.parquet (sorted by order date; this takes a few minutes)...');
-await connection.run(sql(extracted));
+if (!summariesOnly) {
+  await rm(outFile, { force: true });
+  console.log('Writing data/sales.parquet (sorted by order date; this takes a few minutes)...');
+  await connection.run(sql(extracted));
+}
 
-const one = async (query) => (await connection.runAndReadAll(query)).getRowObjectsJson()[0];
-const counts = await one(`SELECT count(*) AS lines, sum(orders) AS orders, min(order_date)::VARCHAR AS first, max(order_date)::VARCHAR AS last FROM read_parquet('${outFile}')`);
-const groups = await one(`SELECT count(DISTINCT row_group_id) AS row_groups FROM parquet_metadata('${outFile}')`);
+const counts = await one(connection, `SELECT count(*) AS lines, sum(orders) AS orders, min(order_date)::VARCHAR AS first, max(order_date)::VARCHAR AS last FROM read_parquet('${outFile}')`);
+const groups = await one(connection, `SELECT count(DISTINCT row_group_id) AS row_groups FROM parquet_metadata('${outFile}')`);
 const size = (await stat(outFile)).size;
-const facts = { ...counts, ...groups, bytes: size, size: mb(size), source: SOURCE };
+const summaries = await writeSummaries(connection);
+const facts = { ...counts, ...groups, bytes: size, size: mb(size), summaries, source: SOURCE };
 console.log(JSON.stringify(facts, null, 2));
-await writeFile(join(root, '.cache', 'facts.json'), JSON.stringify(facts, null, 2));
-if (!keep) await rm(extracted, { recursive: true, force: true });
+await mkdir(cache, { recursive: true });
+await writeFile(join(cache, 'facts.json'), JSON.stringify(facts, null, 2));
+if (!keep && !summariesOnly) await rm(extracted, { recursive: true, force: true });
